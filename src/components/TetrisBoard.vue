@@ -1,10 +1,15 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue';
+import { GAME_CONFIG } from '../constants/gameConstants';
+import type { TetrisPiece, GameBoard as GameBoardType } from '../types/tetris';
+import { generateRandomPiece, checkCollision, createEmptyBoard, calculateGameSpeed } from '../utils/tetrisUtils';
+import { mergePiece, findLinesToClear, removeLines, calculateScore, rotateWithWallKick, hardDrop } from '../services/tetrisGameService';
 
-// 定义游戏板大小
-const BOARD_WIDTH = 10;
-const BOARD_HEIGHT = 20;
-const BASE_BLOCK_SIZE = 30;
+// 导入子组件
+import NextPiecePreview from './NextPiecePreview.vue';
+import GameBoard from './GameBoard.vue';
+import ScoreDisplay from './ScoreDisplay.vue';
+import ControlButtons from './ControlButtons.vue';
 
 // 使用ref跟踪窗口宽度
 const windowWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 768);
@@ -17,15 +22,11 @@ const handleResize = () => {
 };
 
 const blockSize = computed(() => {
-    return windowWidth.value < 768 ? 20 : BASE_BLOCK_SIZE;
+    return windowWidth.value < 768 ? 20 : GAME_CONFIG.BASE_BLOCK_SIZE;
 });
 
-// 计算游戏板实际尺寸
-const boardWidth = computed(() => BOARD_WIDTH * Number(blockSize.value));
-const boardHeight = computed(() => BOARD_HEIGHT * Number(blockSize.value));
-
 // 游戏状态
-const gameBoard = ref<Array<Array<{ value: number; color: string } | 0>>>(Array(BOARD_HEIGHT).fill(null).map(() => Array(BOARD_WIDTH).fill(0)));
+const gameBoard = ref<GameBoardType>(createEmptyBoard());
 const score = ref(0);
 const isGameOver = ref(false);
 const isPaused = ref(false);
@@ -42,67 +43,21 @@ const level = computed(() => Math.floor(score.value / 500) + 1);
 const linesToClear = ref<number[]>([]);
 const isClearing = ref(false);
 const clearAnimationFrame = ref(0);
-const CLEAR_ANIMATION_FRAMES = 6; // 减少动画总帧数，使闪烁次数减少
-
-interface TetrisPiece {
-    shape: number[][];
-    x: number;
-    y: number;
-    color: string;
-}
 
 // 当前方块的状态
 const currentPiece = ref<TetrisPiece | null>(null);
 
-// 定义俄罗斯方块的形状
-const TETROMINOES = [
-    {
-        shape: [[1, 1, 1, 1]], // I
-        color: '#00f0f0'
-    },
-    {
-        shape: [[1, 1], [1, 1]], // O
-        color: '#f0f000'
-    },
-    {
-        shape: [[0, 1, 0], [1, 1, 1]], // T
-        color: '#a000f0'
-    },
-    {
-        shape: [[1, 0], [1, 0], [1, 1]], // L
-        color: '#f0a000'
-    },
-    {
-        shape: [[0, 1], [0, 1], [1, 1]], // J
-        color: '#0000f0'
-    },
-    {
-        shape: [[1, 1, 0], [0, 1, 1]], // S
-        color: '#00f000'
-    },
-    {
-        shape: [[0, 1, 1], [1, 1, 0]], // Z
-        color: '#f00000'
-    }
-];
-
-// 生成随机方块
-const generateRandomPiece = (): TetrisPiece => {
-    const randomPiece = TETROMINOES[Math.floor(Math.random() * TETROMINOES.length)];
-    return {
-        shape: JSON.parse(JSON.stringify(randomPiece.shape)), // 深拷贝形状
-        x: Math.floor(BOARD_WIDTH / 2) - Math.floor(randomPiece.shape[0].length / 2),
-        y: 0,
-        color: randomPiece.color
-    };
-};
+// 触摸控制相关变量
+let touchStartX = 0;
+let touchStartY = 0;
+let lastTouchTime = 0;
 
 // 生成新方块
 const generateNewPiece = () => {
     if (nextPiece.value) {
         currentPiece.value = nextPiece.value;
         // 重置位置
-        currentPiece.value.x = Math.floor(BOARD_WIDTH / 2) - Math.floor(currentPiece.value.shape[0].length / 2);
+        currentPiece.value.x = Math.floor(GAME_CONFIG.BOARD_WIDTH / 2) - Math.floor(currentPiece.value.shape[0].length / 2);
         currentPiece.value.y = 0;
     } else {
         currentPiece.value = generateRandomPiece();
@@ -110,69 +65,26 @@ const generateNewPiece = () => {
     nextPiece.value = generateRandomPiece();
 };
 
-// 检查碰撞
-const checkCollision = (piece: TetrisPiece | null, offsetX = 0, offsetY = 0): boolean => {
-    if (!piece || !piece.shape) return true;
-
-    return piece.shape.some((row, y) =>
-        row.some((value, x) => {
-            if (!value) return false;
-            const newX = piece.x + x + offsetX;
-            const newY = piece.y + y + offsetY;
-            return (
-                newX < 0 ||
-                newX >= BOARD_WIDTH ||
-                newY >= BOARD_HEIGHT ||
-                (newY >= 0 && gameBoard.value[newY][newX])
-            );
-        })
-    );
-};
-
-// 合并方块到游戏板
-const mergePiece = () => {
-    if (!currentPiece.value || !currentPiece.value.shape) return;
-
-    const { shape, x, y, color } = currentPiece.value;
-    shape.forEach((row, pieceY) => {
-        row.forEach((value, pieceX) => {
-            if (value) {
-                const boardY = y + pieceY;
-                const boardX = x + pieceX;
-                if (boardY >= 0 && boardY < BOARD_HEIGHT && boardX >= 0 && boardX < BOARD_WIDTH) {
-                    gameBoard.value[boardY][boardX] = { value: 1, color };
-                }
-            }
-        });
-    });
-};
-
 // 快速下落
 const dropPiece = () => {
     if (!currentPiece.value || isPaused.value) return;
 
-    while (!checkCollision(currentPiece.value, 0, 1)) {
-        currentPiece.value.y++;
-    }
-    mergePiece();
-    clearLines();
-    generateNewPiece();
+    const droppedPiece = hardDrop(currentPiece.value, gameBoard.value);
+    if (droppedPiece) {
+        currentPiece.value = droppedPiece;
+        gameBoard.value = mergePiece(gameBoard.value, currentPiece.value);
+        handleLineClearing();
+        generateNewPiece();
 
-    if (checkCollision(currentPiece.value)) {
-        isGameOver.value = true;
+        if (checkCollision(currentPiece.value, gameBoard.value)) {
+            isGameOver.value = true;
+        }
     }
 };
 
-// 清除完整的行
-const clearLines = () => {
-    // 找出需要清除的行
-    const lines: number[] = [];
-    for (let y = BOARD_HEIGHT - 1; y >= 0; y--) {
-        if (gameBoard.value[y].every(cell => cell !== 0)) {
-            lines.push(y);
-        }
-    }
-
+// 处理行消除
+const handleLineClearing = () => {
+    const lines = findLinesToClear(gameBoard.value);
     if (lines.length > 0) {
         // 设置动画状态
         linesToClear.value = lines;
@@ -180,8 +92,8 @@ const clearLines = () => {
         clearAnimationFrame.value = 0;
 
         // 计算分数
-        const points = [0, 100, 300, 500, 800]; // 0, 1, 2, 3, 4行的分数
-        score.value += lines.length <= 4 ? points[lines.length] : lines.length * 200;
+        const points = calculateScore(lines.length);
+        score.value += points;
 
         // 更新最高分
         if (score.value > highScore.value) {
@@ -189,10 +101,9 @@ const clearLines = () => {
             localStorage.setItem('tetrisHighScore', highScore.value.toString());
         }
 
-        return true; // 返回true表示有行需要清除
+        return true;
     }
-
-    return false; // 返回false表示没有行需要清除
+    return false;
 };
 
 // 执行行消除动画
@@ -201,105 +112,44 @@ const performClearAnimation = () => {
 
     clearAnimationFrame.value++;
 
-    if (clearAnimationFrame.value >= CLEAR_ANIMATION_FRAMES) {
+    if (clearAnimationFrame.value >= GAME_CONFIG.CLEAR_ANIMATION_FRAMES) {
         // 动画结束，实际移除行
-        finishClearLines();
+        gameBoard.value = removeLines(gameBoard.value, linesToClear.value);
+
+        // 重置动画状态
+        isClearing.value = false;
+        linesToClear.value = [];
+        clearAnimationFrame.value = 0;
+
+        // 生成新方块
+        generateNewPiece();
+
+        // 检查游戏结束
+        if (checkCollision(currentPiece.value, gameBoard.value)) {
+            isGameOver.value = true;
+            isPlaying.value = false;
+            return false;
+        }
+
         return false;
     }
 
     return true; // 动画仍在进行中
 };
 
-// 完成行消除
-const finishClearLines = () => {
-    // 按照从下到上的顺序排序行索引
-    const sortedLines = [...linesToClear.value].sort((a, b) => b - a);
-
-    // 移除行
-    for (const y of sortedLines) {
-        gameBoard.value.splice(y, 1);
-        // 在顶部添加新行
-        gameBoard.value.unshift(Array(BOARD_WIDTH).fill(0));
-    }
-
-    // 重置动画状态
-    isClearing.value = false;
-    linesToClear.value = [];
-    clearAnimationFrame.value = 0;
-};
-
 // 移动方块
 const movePiece = (dx: number) => {
     if (!currentPiece.value || isPaused.value) return;
 
-    if (!checkCollision(currentPiece.value, dx, 0)) {
+    if (!checkCollision(currentPiece.value, gameBoard.value, dx, 0)) {
         currentPiece.value.x += dx;
     }
 };
 
-// 渲染游戏板和当前方块
-const renderBoard = () => {
-    const board = gameBoard.value.map(row => [...row]);
-
-    // 渲染当前方块
-    if (currentPiece.value && !isGameOver.value && !isClearing.value) {
-        const { shape, x, y, color } = currentPiece.value;
-        shape.forEach((row, pieceY) => {
-            row.forEach((value, pieceX) => {
-                if (value && y + pieceY >= 0) {
-                    const boardY = y + pieceY;
-                    const boardX = x + pieceX;
-                    if (boardY < BOARD_HEIGHT && boardX < BOARD_WIDTH) {
-                        board[boardY][boardX] = { value: 1, color };
-                    }
-                }
-            });
-        });
-    }
-
-    // 渲染消除动画
-    if (isClearing.value && linesToClear.value.length > 0) {
-        const animationProgress = clearAnimationFrame.value / CLEAR_ANIMATION_FRAMES;
-
-        linesToClear.value.forEach(lineY => {
-            for (let x = 0; x < BOARD_WIDTH; x++) {
-                // 根据动画进度计算闪烁效果，减少闪烁次数
-                const isVisible = Math.floor(animationProgress * 3) % 2 === 0;
-
-                if (isVisible) {
-                    // 闪烁时显示白色
-                    board[lineY][x] = { value: 1, color: '#FFFFFF' };
-                } else {
-                    // 闪烁时隐藏
-                    board[lineY][x] = 0;
-                }
-            }
-        });
-    }
-
-    return board;
-};
-
-// 渲染下一个方块预览
-const renderNextPiece = () => {
-    if (!nextPiece.value) return [];
-
-    const { shape, color } = nextPiece.value;
-    const previewBoard = Array(4).fill(null).map(() => Array(4).fill(0));
-
-    // 计算居中偏移
-    const offsetX = Math.floor((4 - shape[0].length) / 2);
-    const offsetY = Math.floor((4 - shape.length) / 2);
-
-    shape.forEach((row, y) => {
-        row.forEach((value, x) => {
-            if (value) {
-                previewBoard[y + offsetY][x + offsetX] = { value: 1, color };
-            }
-        });
-    });
-
-    return previewBoard;
+// 旋转方块
+const rotatePiece = () => {
+    if (!currentPiece.value || isPaused.value) return;
+    currentPiece.value = rotateWithWallKick(currentPiece.value, gameBoard.value);
 };
 
 // 键盘事件处理
@@ -314,7 +164,7 @@ const handleKeydown = (event: KeyboardEvent) => {
             movePiece(1);
             break;
         case 'ArrowDown':
-            if (!checkCollision(currentPiece.value, 0, 1)) {
+            if (!checkCollision(currentPiece.value, gameBoard.value, 0, 1)) {
                 currentPiece.value!.y++;
             }
             break;
@@ -330,45 +180,6 @@ const handleKeydown = (event: KeyboardEvent) => {
             break;
     }
 };
-
-// 旋转方块
-const rotatePiece = () => {
-    if (!currentPiece.value || isPaused.value) return;
-
-    const { shape } = currentPiece.value;
-    const newShape = shape[0].map((_, i) => shape.map(row => row[i]).reverse());
-    const oldShape = currentPiece.value.shape;
-    currentPiece.value.shape = newShape;
-
-    // 墙踢算法：如果旋转后碰撞，尝试左右移动来适应
-    if (checkCollision(currentPiece.value)) {
-        // 尝试向左移动
-        for (let offset = 1; offset <= 2; offset++) {
-            currentPiece.value.x -= offset;
-            if (!checkCollision(currentPiece.value)) {
-                return; // 找到有效位置
-            }
-            currentPiece.value.x += offset; // 恢复位置
-        }
-
-        // 尝试向右移动
-        for (let offset = 1; offset <= 2; offset++) {
-            currentPiece.value.x += offset;
-            if (!checkCollision(currentPiece.value)) {
-                return; // 找到有效位置
-            }
-            currentPiece.value.x -= offset; // 恢复位置
-        }
-
-        // 如果都不行，恢复原来的形状
-        currentPiece.value.shape = oldShape;
-    }
-};
-
-// 触摸控制相关变量
-let touchStartX = 0;
-let touchStartY = 0;
-let lastTouchTime = 0;
 
 // 处理触摸开始
 const handleTouchStart = (event: Event) => {
@@ -407,7 +218,7 @@ const handleTouchMove = (event: Event) => {
 
     // 垂直滑动 - 加速下落
     if (diffY > 50 && Math.abs(diffY) > Math.abs(diffX)) {
-        if (!checkCollision(currentPiece.value, 0, 1)) {
+        if (!checkCollision(currentPiece.value, gameBoard.value, 0, 1)) {
             currentPiece.value!.y++;
         }
         touchStartY = touchY;
@@ -442,7 +253,7 @@ const startGame = () => {
     isPaused.value = false;
     isPlaying.value = true;
     score.value = 0;
-    gameBoard.value = Array(BOARD_HEIGHT).fill(null).map(() => Array(BOARD_WIDTH).fill(0));
+    gameBoard.value = createEmptyBoard();
     nextPiece.value = generateRandomPiece();
     generateNewPiece();
 
@@ -456,19 +267,11 @@ const startGame = () => {
         gameLoopInterval = null;
     }
 
-    // 游戏速度会随着分数增加而加快
-    const getGameSpeed = () => {
-        const baseSpeed = 1000; // 基础速度1秒
-        const minSpeed = 100;   // 最小速度100毫秒
-        const speedFactor = Math.floor(score.value / 500); // 每500分加快一次
-        return Math.max(minSpeed, baseSpeed - speedFactor * 100);
-    };
-
     let lastTime = 0;
     let deltaTime = 0;
-    let currentSpeed = getGameSpeed();
+    let currentSpeed = calculateGameSpeed(score.value);
     let animationFrameTime = 0;
-    const ANIMATION_FRAME_DURATION = 80; // 增加每帧动画持续时间，减少闪烁频率
+    const ANIMATION_FRAME_DURATION = GAME_CONFIG.ANIMATION_FRAME_DURATION;
 
     const runGameLoop = (timestamp: number) => {
         if (!lastTime) lastTime = timestamp;
@@ -505,18 +308,18 @@ const startGame = () => {
             deltaTime = 0;
 
             // 更新游戏速度
-            currentSpeed = getGameSpeed();
+            currentSpeed = calculateGameSpeed(score.value);
 
             // 更新游戏状态
-            if (currentPiece.value && !checkCollision(currentPiece.value, 0, 1)) {
+            if (currentPiece.value && !checkCollision(currentPiece.value, gameBoard.value, 0, 1)) {
                 currentPiece.value.y++;
             } else {
                 if (currentPiece.value) {
-                    mergePiece();
+                    gameBoard.value = mergePiece(gameBoard.value, currentPiece.value);
                     // 如果有行需要清除，则开始动画，否则生成新方块
-                    if (!clearLines()) {
+                    if (!handleLineClearing()) {
                         generateNewPiece();
-                        if (checkCollision(currentPiece.value)) {
+                        if (checkCollision(currentPiece.value, gameBoard.value)) {
                             isGameOver.value = true;
                             isPlaying.value = false;
                             if (gameLoopInterval) {
@@ -569,11 +372,11 @@ onMounted(() => {
         document.addEventListener('visibilitychange', handleVisibilityChange);
 
         // 添加触摸事件监听 - PC端游戏板
-        const gameBoard = document.querySelector('.game-board');
-        if (gameBoard) {
-            gameBoard.addEventListener('touchstart', handleTouchStart as EventListener);
-            gameBoard.addEventListener('touchmove', handleTouchMove as EventListener);
-            gameBoard.addEventListener('touchend', handleTouchEnd as EventListener);
+        const gameBoardEl = document.querySelector('.game-board');
+        if (gameBoardEl) {
+            gameBoardEl.addEventListener('touchstart', handleTouchStart as EventListener);
+            gameBoardEl.addEventListener('touchmove', handleTouchMove as EventListener);
+            gameBoardEl.addEventListener('touchend', handleTouchEnd as EventListener);
         }
 
         // 添加触摸事件监听 - 移动端游戏板
@@ -601,11 +404,11 @@ onUnmounted(() => {
         document.removeEventListener('visibilitychange', handleVisibilityChange);
 
         // 移除触摸事件监听 - PC端游戏板
-        const gameBoard = document.querySelector('.game-board');
-        if (gameBoard) {
-            gameBoard.removeEventListener('touchstart', handleTouchStart as EventListener);
-            gameBoard.removeEventListener('touchmove', handleTouchMove as EventListener);
-            gameBoard.removeEventListener('touchend', handleTouchEnd as EventListener);
+        const gameBoardEl = document.querySelector('.game-board');
+        if (gameBoardEl) {
+            gameBoardEl.removeEventListener('touchstart', handleTouchStart as EventListener);
+            gameBoardEl.removeEventListener('touchmove', handleTouchMove as EventListener);
+            gameBoardEl.removeEventListener('touchend', handleTouchEnd as EventListener);
         }
 
         // 移除触摸事件监听 - 移动端游戏板
@@ -633,62 +436,18 @@ onUnmounted(() => {
         <div class="game-content desktop-layout">
             <!-- 左侧信息面板 -->
             <div class="left-panel">
-                <div class="score-container">
-                    <div class="score">分数: {{ score }}</div>
-                    <div class="high-score">最高分: {{ highScore }}</div>
-                    <div class="level">级别: {{ level }}</div>
-                </div>
-                <div class="next-piece-container">
-                    <div class="next-piece-title">下一个:</div>
-                    <div class="next-piece-preview"
-                        :style="{ width: `${blockSize * 4}px`, height: `${blockSize * 4}px` }">
-                        <template v-for="(row, y) in renderNextPiece()" :key="y">
-                            <div v-for="(cell, x) in row" :key="`next-${x}-${y}`" class="preview-cell" :style="{
-                                width: `${blockSize - 2}px`,
-                                height: `${blockSize - 2}px`,
-                                backgroundColor: cell ? cell.color : 'transparent',
-                                border: cell ? '1px solid rgba(255, 255, 255, 0.1)' : '1px solid rgba(255, 255, 255, 0.05)',
-                                margin: '1px',
-                                borderRadius: '2px'
-                            }">
-                            </div>
-                        </template>
-                    </div>
-                </div>
-                <div class="controls">
-                    <button @click="startGame" v-if="!isPlaying || isGameOver">开始游戏</button>
-                    <button @click="pauseGame" v-else>{{ isPaused ? '继续' : '暂停' }}</button>
-                    <button @click="resetGame">重新开始</button>
-                </div>
+                <ScoreDisplay :score="score" :high-score="highScore" :level="level" />
+                <NextPiecePreview :next-piece="nextPiece" :block-size="blockSize" />
+                <ControlButtons :is-playing="isPlaying" :is-game-over="isGameOver" :is-paused="isPaused"
+                    @start="startGame" @pause="pauseGame" @reset="resetGame" />
             </div>
 
             <!-- 中间游戏主体 -->
             <div class="center-panel">
-                <div class="game-board" :style="{ width: `${boardWidth}px`, height: `${boardHeight}px` }">
-                    <template v-for="(row, y) in renderBoard()" :key="y">
-                        <div v-for="(cell, x) in row" :key="`${x}-${y}`" class="cell" :style="{
-                            width: `${blockSize - 2}px`,
-                            height: `${blockSize - 2}px`,
-                            backgroundColor: cell ? cell.color : 'transparent',
-                            border: cell ? '1px solid rgba(255, 255, 255, 0.1)' : '1px solid rgba(255, 255, 255, 0.05)',
-                            margin: '1px'
-                        }">
-                        </div>
-                    </template>
-                    <div v-if="isGameOver" class="game-over">
-                        <div class="game-over-text">游戏结束</div>
-                        <div class="final-score">最终分数: {{ score }}</div>
-                        <button @click="resetGame">重新开始</button>
-                    </div>
-                    <div v-if="isPaused && !isGameOver" class="pause-overlay">
-                        <div class="pause-text">已暂停</div>
-                        <button @click="pauseGame">继续</button>
-                    </div>
-                    <!-- 添加暂停按钮 -->
-                    <button v-if="isPlaying && !isPaused && !isGameOver" @click="pauseGame" class="pause-button">
-                        <span class="pause-icon"></span>
-                    </button>
-                </div>
+                <GameBoard :game-board="gameBoard" :current-piece="currentPiece" :is-game-over="isGameOver"
+                    :is-paused="isPaused" :is-clearing="isClearing" :lines-to-clear="linesToClear"
+                    :clear-animation-frame="clearAnimationFrame" :block-size="blockSize" :score="score"
+                    @pause="pauseGame" @reset="resetGame" />
             </div>
 
             <!-- 右侧操作说明 -->
@@ -709,67 +468,25 @@ onUnmounted(() => {
             <!-- 上方信息区域 -->
             <div class="mobile-top-area">
                 <!-- 左侧分数区域 -->
-                <div class="mobile-score-area">
-                    <div class="score">分数: {{ score }}</div>
-                    <div class="high-score">最高分: {{ highScore }}</div>
-                    <div class="level">级别: {{ level }}</div>
-                </div>
+                <ScoreDisplay :score="score" :high-score="highScore" :level="level" />
 
                 <!-- 右侧下一个方块预览 -->
-                <div class="mobile-next-piece">
-                    <div class="next-piece-title">下一个:</div>
-                    <div class="next-piece-preview"
-                        :style="{ width: `${blockSize * 4}px`, height: `${blockSize * 4}px` }">
-                        <template v-for="(row, y) in renderNextPiece()" :key="y">
-                            <div v-for="(cell, x) in row" :key="`mobile-next-${x}-${y}`" class="preview-cell" :style="{
-                                width: `${blockSize - 2}px`,
-                                height: `${blockSize - 2}px`,
-                                backgroundColor: cell ? cell.color : 'transparent',
-                                border: cell ? '1px solid rgba(255, 255, 255, 0.1)' : '1px solid rgba(255, 255, 255, 0.05)',
-                                margin: '1px',
-                                borderRadius: '2px'
-                            }">
-                            </div>
-                        </template>
-                    </div>
-                </div>
+                <NextPiecePreview :next-piece="nextPiece" :block-size="blockSize" />
             </div>
 
             <!-- 控制按钮区域 -->
             <div class="mobile-controls-area">
-                <button @click="startGame" v-if="!isPlaying || isGameOver" class="control-btn">开始游戏</button>
-                <button @click="pauseGame" v-else class="control-btn">{{ isPaused ? '继续' : '暂停' }}</button>
-                <button @click="resetGame" class="control-btn">重新开始</button>
+                <ControlButtons :is-playing="isPlaying" :is-game-over="isGameOver" :is-paused="isPaused"
+                    @start="startGame" @pause="pauseGame" @reset="resetGame" />
             </div>
 
             <!-- 游戏主体 -->
-            <div class="mobile-game-board" :style="{ width: `${boardWidth}px`, height: `${boardHeight}px` }">
-                <template v-for="(row, y) in renderBoard()" :key="y">
-                    <div v-for="(cell, x) in row" :key="`mobile-${x}-${y}`" class="cell" :style="{
-                        width: `${blockSize - 2}px`,
-                        height: `${blockSize - 2}px`,
-                        backgroundColor: cell ? cell.color : 'transparent',
-                        border: cell ? '1px solid rgba(255, 255, 255, 0.1)' : '1px solid rgba(255, 255, 255, 0.05)',
-                        margin: '1px'
-                    }">
-                    </div>
-                </template>
-                <div v-if="isGameOver" class="game-over">
-                    <div class="game-over-text">游戏结束</div>
-                    <div class="final-score">最终分数: {{ score }}</div>
-                    <button @click="resetGame">重新开始</button>
-                </div>
-                <div v-if="isPaused && !isGameOver" class="pause-overlay">
-                    <div class="pause-text">已暂停</div>
-                    <button @click="pauseGame">继续</button>
-                </div>
-                <!-- 添加暂停按钮 -->
-                <button v-if="isPlaying && !isPaused && !isGameOver" @click="pauseGame" class="pause-button">
-                    <span class="pause-icon"></span>
-                </button>
-            </div>
+            <GameBoard :game-board="gameBoard" :current-piece="currentPiece" :is-game-over="isGameOver"
+                :is-paused="isPaused" :is-clearing="isClearing" :lines-to-clear="linesToClear"
+                :clear-animation-frame="clearAnimationFrame" :block-size="blockSize" :score="score" @pause="pauseGame"
+                @reset="resetGame" class="mobile-game-board" />
 
-            <!-- 移动端控制按钮 - 放在游戏板下方 -->
+            <!-- 移动端控制按钮 -->
             <div class="mobile-controls">
                 <div class="control-row">
                     <button @click="rotatePiece" class="rotate-btn">旋转</button>
@@ -831,169 +548,6 @@ onUnmounted(() => {
     gap: 10px;
 }
 
-.score-container {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    min-width: 120px;
-    background-color: rgba(0, 0, 0, 0.3);
-    padding: 15px;
-    border-radius: 8px;
-    border: 1px solid #333;
-}
-
-.score,
-.high-score,
-.level {
-    font-size: 1.2em;
-    color: white;
-    text-align: left;
-}
-
-.next-piece-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    background-color: rgba(0, 0, 0, 0.3);
-    padding: 15px;
-    border-radius: 8px;
-    border: 1px solid #333;
-}
-
-.next-piece-title {
-    font-size: 1.2em;
-    color: white;
-    margin-bottom: 10px;
-}
-
-.next-piece-preview {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    background-color: rgba(0, 0, 0, 0.5);
-    border: 1px solid #333;
-    gap: 0;
-    padding: 0;
-}
-
-.preview-cell {
-    box-sizing: border-box;
-}
-
-.controls {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    background-color: rgba(0, 0, 0, 0.3);
-    padding: 15px;
-    border-radius: 8px;
-    border: 1px solid #333;
-}
-
-button {
-    padding: 10px 20px;
-    font-size: 1em;
-    border: none;
-    border-radius: 5px;
-    background-color: #4CAF50;
-    color: white;
-    cursor: pointer;
-    transition: background-color 0.3s;
-}
-
-button:hover {
-    background-color: #45a049;
-}
-
-.game-board,
-.mobile-game-board {
-    position: relative;
-    display: grid;
-    grid-template-columns: repeat(10, 1fr);
-    background-color: rgba(0, 0, 0, 0.8);
-    border: 2px solid #333;
-    border-radius: 4px;
-    overflow: hidden;
-    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
-    gap: 0;
-    padding: 0;
-}
-
-.cell {
-    box-sizing: border-box;
-    transition: background-color 0.2s;
-    border-radius: 2px;
-}
-
-.game-over,
-.pause-overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    background-color: rgba(0, 0, 0, 0.8);
-    gap: 20px;
-    z-index: 10;
-}
-
-.game-over-text,
-.pause-text {
-    color: white;
-    font-size: 2em;
-    text-align: center;
-}
-
-.final-score {
-    color: #4CAF50;
-    font-size: 1.5em;
-}
-
-/* 暂停按钮样式 */
-.pause-button {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    background-color: rgba(0, 0, 0, 0.5);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    padding: 0;
-    z-index: 5;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-.pause-icon {
-    display: inline-block;
-    width: 16px;
-    height: 16px;
-    position: relative;
-}
-
-.pause-icon::before,
-.pause-icon::after {
-    content: '';
-    position: absolute;
-    width: 5px;
-    height: 16px;
-    background-color: white;
-    border-radius: 2px;
-}
-
-.pause-icon::before {
-    left: 2px;
-}
-
-.pause-icon::after {
-    right: 2px;
-}
-
 .instructions {
     margin-top: 0;
     color: #aaa;
@@ -1030,55 +584,12 @@ button:hover {
     gap: 10px;
 }
 
-.mobile-score-area {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    background-color: rgba(0, 0, 0, 0.3);
-    padding: 10px;
-    border-radius: 8px;
-    border: 1px solid #333;
-}
-
-.mobile-next-piece {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    background-color: rgba(0, 0, 0, 0.3);
-    padding: 10px;
-    border-radius: 8px;
-    border: 1px solid #333;
-}
-
 .mobile-controls-area {
     display: flex;
     justify-content: center;
     gap: 10px;
     width: 100%;
     max-width: 400px;
-    background-color: rgba(0, 0, 0, 0.3);
-    padding: 10px;
-    border-radius: 8px;
-    border: 1px solid #333;
-}
-
-.mobile-controls-area .control-btn {
-    flex: 1;
-    font-size: 0.9em;
-    padding: 8px 5px;
-}
-
-.mobile-game-board {
-    position: relative;
-    display: grid;
-    grid-template-columns: repeat(10, 1fr);
-    background-color: rgba(0, 0, 0, 0.8);
-    border: 2px solid #333;
-    border-radius: 4px;
-    overflow: hidden;
-    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
-    margin: 5px 0;
 }
 
 .mobile-controls {
@@ -1152,9 +663,6 @@ button:hover {
         max-width: 100%;
     }
 
-    .score-container,
-    .next-piece-container,
-    .controls,
     .instructions {
         margin: 0 10px 10px 0;
     }
@@ -1176,22 +684,6 @@ button:hover {
 
     .mobile-layout {
         display: flex;
-    }
-
-    .pause-button {
-        width: 30px;
-        height: 30px;
-    }
-
-    .pause-icon {
-        width: 12px;
-        height: 12px;
-    }
-
-    .pause-icon::before,
-    .pause-icon::after {
-        width: 4px;
-        height: 12px;
     }
 }
 </style>

@@ -6,7 +6,26 @@
 
 ## 版本
 
-当前版本：v1.0.0
+当前版本：v1.0.1
+
+### 更新日志
+
+#### v1.0.1
+- 使用requestAnimationFrame重构游戏循环，提高动画流畅度
+- 添加行消除闪烁动画效果，提升游戏视觉体验
+- 优化动画参数，减少闪烁次数，使动画更加舒适
+- 添加页面可见性变化监听，切换标签页时自动暂停游戏
+- 修复移动端触摸控制问题
+- 代码重构：
+  - 抽离类型定义到独立文件
+  - 拆分组件为更小的可复用组件
+  - 分离游戏逻辑到服务层
+  - 提取工具函数到工具类
+
+#### v1.0.0
+- 初始版本发布
+- 实现基本的俄罗斯方块游戏功能
+- 支持PC端和移动端
 
 ## 功能特点
 
@@ -89,7 +108,17 @@ npm run build
 ```
 src/
   ├── components/     # 组件目录
-  │   └── TetrisBoard.vue  # 主游戏组件
+  │   ├── TetrisBoard.vue     # 主游戏组件
+  │   ├── GameBoard.vue       # 游戏板组件
+  │   ├── NextPiecePreview.vue # 下一个方块预览组件
+  │   ├── ScoreDisplay.vue    # 分数显示组件
+  │   └── ControlButtons.vue  # 控制按钮组件
+  ├── types/          # 类型定义
+  │   └── tetris.ts   # 游戏类型定义
+  ├── utils/          # 工具函数
+  │   └── tetrisUtils.ts # 游戏工具函数
+  ├── services/       # 服务层
+  │   └── tetrisGameService.ts # 游戏逻辑服务
   ├── assets/         # 静态资源
   ├── App.vue         # 根组件
   ├── main.ts         # 入口文件
