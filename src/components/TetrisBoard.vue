@@ -30,7 +30,7 @@ const score = ref(0);
 const isGameOver = ref(false);
 const isPaused = ref(false);
 const isPlaying = ref(false);
-// 添加gameLoop变量
+// 添加gameLoop变量，requestAnimationFrame返回一个数字ID
 let gameLoopInterval: number | null = null;
 // 添加下一个方块预览
 const nextPiece = ref<TetrisPiece | null>(null);
@@ -38,6 +38,11 @@ const nextPiece = ref<TetrisPiece | null>(null);
 const highScore = ref(localStorage.getItem('tetrisHighScore') ? parseInt(localStorage.getItem('tetrisHighScore') || '0') : 0);
 // 添加游戏级别
 const level = computed(() => Math.floor(score.value / 500) + 1);
+// 添加消除动画状态
+const linesToClear = ref<number[]>([]);
+const isClearing = ref(false);
+const clearAnimationFrame = ref(0);
+const CLEAR_ANIMATION_FRAMES = 6; // 减少动画总帧数，使闪烁次数减少
 
 interface TetrisPiece {
     shape: number[][];
@@ -160,31 +165,67 @@ const dropPiece = () => {
 
 // 清除完整的行
 const clearLines = () => {
-    let linesCleared = 0;
-
+    // 找出需要清除的行
+    const lines: number[] = [];
     for (let y = BOARD_HEIGHT - 1; y >= 0; y--) {
         if (gameBoard.value[y].every(cell => cell !== 0)) {
-            // 删除完整的行
-            gameBoard.value.splice(y, 1);
-            // 在顶部添加新行
-            gameBoard.value.unshift(Array(BOARD_WIDTH).fill(0));
-            linesCleared++;
-            // 由于我们删除了一行并添加了一行，需要重新检查当前行
-            y++;
+            lines.push(y);
         }
     }
 
-    if (linesCleared > 0) {
-        // 根据消除的行数增加分数
+    if (lines.length > 0) {
+        // 设置动画状态
+        linesToClear.value = lines;
+        isClearing.value = true;
+        clearAnimationFrame.value = 0;
+
+        // 计算分数
         const points = [0, 100, 300, 500, 800]; // 0, 1, 2, 3, 4行的分数
-        score.value += linesCleared <= 4 ? points[linesCleared] : linesCleared * 200;
+        score.value += lines.length <= 4 ? points[lines.length] : lines.length * 200;
 
         // 更新最高分
         if (score.value > highScore.value) {
             highScore.value = score.value;
             localStorage.setItem('tetrisHighScore', highScore.value.toString());
         }
+
+        return true; // 返回true表示有行需要清除
     }
+
+    return false; // 返回false表示没有行需要清除
+};
+
+// 执行行消除动画
+const performClearAnimation = () => {
+    if (!isClearing.value) return false;
+
+    clearAnimationFrame.value++;
+
+    if (clearAnimationFrame.value >= CLEAR_ANIMATION_FRAMES) {
+        // 动画结束，实际移除行
+        finishClearLines();
+        return false;
+    }
+
+    return true; // 动画仍在进行中
+};
+
+// 完成行消除
+const finishClearLines = () => {
+    // 按照从下到上的顺序排序行索引
+    const sortedLines = [...linesToClear.value].sort((a, b) => b - a);
+
+    // 移除行
+    for (const y of sortedLines) {
+        gameBoard.value.splice(y, 1);
+        // 在顶部添加新行
+        gameBoard.value.unshift(Array(BOARD_WIDTH).fill(0));
+    }
+
+    // 重置动画状态
+    isClearing.value = false;
+    linesToClear.value = [];
+    clearAnimationFrame.value = 0;
 };
 
 // 移动方块
@@ -200,7 +241,8 @@ const movePiece = (dx: number) => {
 const renderBoard = () => {
     const board = gameBoard.value.map(row => [...row]);
 
-    if (currentPiece.value && !isGameOver.value) {
+    // 渲染当前方块
+    if (currentPiece.value && !isGameOver.value && !isClearing.value) {
         const { shape, x, y, color } = currentPiece.value;
         shape.forEach((row, pieceY) => {
             row.forEach((value, pieceX) => {
@@ -214,6 +256,27 @@ const renderBoard = () => {
             });
         });
     }
+
+    // 渲染消除动画
+    if (isClearing.value && linesToClear.value.length > 0) {
+        const animationProgress = clearAnimationFrame.value / CLEAR_ANIMATION_FRAMES;
+
+        linesToClear.value.forEach(lineY => {
+            for (let x = 0; x < BOARD_WIDTH; x++) {
+                // 根据动画进度计算闪烁效果，减少闪烁次数
+                const isVisible = Math.floor(animationProgress * 3) % 2 === 0;
+
+                if (isVisible) {
+                    // 闪烁时显示白色
+                    board[lineY][x] = { value: 1, color: '#FFFFFF' };
+                } else {
+                    // 闪烁时隐藏
+                    board[lineY][x] = 0;
+                }
+            }
+        });
+    }
+
     return board;
 };
 
@@ -383,9 +446,13 @@ const startGame = () => {
     nextPiece.value = generateRandomPiece();
     generateNewPiece();
 
+    // 重置动画状态
+    isClearing.value = false;
+    linesToClear.value = [];
+    clearAnimationFrame.value = 0;
+
     if (gameLoopInterval) {
-        clearInterval(gameLoopInterval);
-        clearTimeout(gameLoopInterval);
+        cancelAnimationFrame(gameLoopInterval);
         gameLoopInterval = null;
     }
 
@@ -397,10 +464,20 @@ const startGame = () => {
         return Math.max(minSpeed, baseSpeed - speedFactor * 100);
     };
 
-    const runGameLoop = () => {
+    let lastTime = 0;
+    let deltaTime = 0;
+    let currentSpeed = getGameSpeed();
+    let animationFrameTime = 0;
+    const ANIMATION_FRAME_DURATION = 80; // 增加每帧动画持续时间，减少闪烁频率
+
+    const runGameLoop = (timestamp: number) => {
+        if (!lastTime) lastTime = timestamp;
+        const frameTime = timestamp - lastTime;
+        lastTime = timestamp;
+
+        // 如果游戏暂停，继续保持循环但不更新游戏状态
         if (isPaused.value) {
-            // 如果游戏暂停，继续保持循环但不更新游戏状态
-            gameLoopInterval = window.setTimeout(runGameLoop, 100);
+            gameLoopInterval = requestAnimationFrame(runGameLoop);
             return;
         }
 
@@ -408,35 +485,57 @@ const startGame = () => {
             return;
         }
 
-        if (currentPiece.value && !checkCollision(currentPiece.value, 0, 1)) {
-            currentPiece.value.y++;
-        } else {
-            if (currentPiece.value) {
-                mergePiece();
-                clearLines();
-                generateNewPiece();
+        // 处理消除动画
+        if (isClearing.value) {
+            animationFrameTime += frameTime;
+            if (animationFrameTime >= ANIMATION_FRAME_DURATION) {
+                animationFrameTime = 0;
+                performClearAnimation();
+            }
+            gameLoopInterval = requestAnimationFrame(runGameLoop);
+            return;
+        }
 
-                if (checkCollision(currentPiece.value)) {
-                    isGameOver.value = true;
-                    isPlaying.value = false;
-                    if (gameLoopInterval) {
-                        clearTimeout(gameLoopInterval);
-                        gameLoopInterval = null;
+        // 正常游戏逻辑
+        deltaTime += frameTime;
+
+        // 根据当前游戏速度更新游戏状态
+        if (deltaTime >= currentSpeed) {
+            // 重置累积时间
+            deltaTime = 0;
+
+            // 更新游戏速度
+            currentSpeed = getGameSpeed();
+
+            // 更新游戏状态
+            if (currentPiece.value && !checkCollision(currentPiece.value, 0, 1)) {
+                currentPiece.value.y++;
+            } else {
+                if (currentPiece.value) {
+                    mergePiece();
+                    // 如果有行需要清除，则开始动画，否则生成新方块
+                    if (!clearLines()) {
+                        generateNewPiece();
+                        if (checkCollision(currentPiece.value)) {
+                            isGameOver.value = true;
+                            isPlaying.value = false;
+                            if (gameLoopInterval) {
+                                cancelAnimationFrame(gameLoopInterval);
+                                gameLoopInterval = null;
+                            }
+                            return;
+                        }
                     }
-                    return;
                 }
             }
         }
 
-        // 根据当前分数调整游戏速度
-        if (gameLoopInterval) {
-            clearTimeout(gameLoopInterval);
-        }
-        gameLoopInterval = window.setTimeout(runGameLoop, getGameSpeed());
+        // 继续游戏循环
+        gameLoopInterval = requestAnimationFrame(runGameLoop);
     };
 
     // 启动游戏循环
-    gameLoopInterval = window.setTimeout(runGameLoop, getGameSpeed());
+    gameLoopInterval = requestAnimationFrame(runGameLoop);
     return gameLoopInterval;
 };
 
@@ -448,17 +547,26 @@ const pauseGame = () => {
 // 重置游戏
 const resetGame = () => {
     if (gameLoopInterval) {
-        clearTimeout(gameLoopInterval);
-        clearInterval(gameLoopInterval);
+        cancelAnimationFrame(gameLoopInterval);
         gameLoopInterval = null;
     }
     startGame();
+};
+
+// 处理页面可见性变化
+const handleVisibilityChange = () => {
+    if (document.hidden && isPlaying.value && !isPaused.value && !isGameOver.value) {
+        // 当页面不可见且游戏正在进行时自动暂停
+        pauseGame();
+    }
 };
 
 onMounted(() => {
     if (typeof window !== 'undefined') {
         window.addEventListener('resize', handleResize);
         window.addEventListener('keydown', handleKeydown);
+        // 添加页面可见性变化监听
+        document.addEventListener('visibilitychange', handleVisibilityChange);
 
         // 添加触摸事件监听 - PC端游戏板
         const gameBoard = document.querySelector('.game-board');
@@ -489,6 +597,8 @@ onUnmounted(() => {
     if (typeof window !== 'undefined') {
         window.removeEventListener('resize', handleResize);
         window.removeEventListener('keydown', handleKeydown);
+        // 移除页面可见性变化监听
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
 
         // 移除触摸事件监听 - PC端游戏板
         const gameBoard = document.querySelector('.game-board');
@@ -507,8 +617,7 @@ onUnmounted(() => {
         }
     }
     if (gameLoopInterval) {
-        clearTimeout(gameLoopInterval);
-        clearInterval(gameLoopInterval);
+        cancelAnimationFrame(gameLoopInterval);
         gameLoopInterval = null;
     }
 });
