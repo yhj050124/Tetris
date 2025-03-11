@@ -1,3 +1,24 @@
+# Vue3 Tetris Game Documentation
+
+This directory contains the English documentation for the Vue3 Tetris Game.
+
+## Documentation Index
+
+- [Introduction](./introduction.md) (To be added)
+- [Installation Guide](./installation.md) (To be added)
+- [Game Rules](./game-rules.md) (To be added)
+- [Development Guide](./DEVELOPMENT.md)
+- [API Reference](./api-reference.md) (To be added)
+- [FAQ](./faq.md) (To be added)
+
+## Related Links
+
+- [Project Home](../../README.md)
+- [Complete Changelog](./CHANGELOG.md)
+- [中文文档](../zh-CN/README.md)
+
+---
+
 # Vue3 Tetris Game
 
 A modern Tetris game developed with Vue3 and TypeScript. The game maintains the core gameplay of classic Tetris while adopting a modern technology stack and elegant interface design. It supports both PC and mobile devices, providing a great cross-device experience.
@@ -6,11 +27,27 @@ A modern Tetris game developed with Vue3 and TypeScript. The game maintains the 
 
 ## Version
 
-Current Version: v1.0.2
+Current Version: v1.0.3
 
 ### Changelog
 
-View the complete [Changelog](./CHANGELOG.md)
+#### v1.0.3 (Current version)
+- **Bug Fixes**:
+  - Fixed potential wall kick logic issues, added upward wall kick
+  - Fixed performance issues in game loop, optimized performance in paused state
+  - Fixed potential issues in touch event handling, added throttling logic
+  - Fixed type checking issues in line clearing logic
+  - Fixed potential issues in hard drop function, added return value check
+  - Fixed incomplete event listener cleanup
+  - Fixed incomplete board boundary check, added top boundary check
+- **Performance Optimization**:
+  - Optimized touch event handling for mobile devices, improved precision
+  - Optimized game speed calculation for more reasonable speed progression
+- **Documentation Improvements**:
+  - Reorganized project documentation structure, created separate changelog file
+  - Added Chinese and English documentation directories for internationalization
+
+[View Complete Changelog](./CHANGELOG.md)
 
 ## Features
 
@@ -103,10 +140,7 @@ src/
   ├── utils/          # Utility functions
   │   └── tetrisUtils.ts # Game utility functions
   ├── services/       # Service layer
-  │   ├── tetrisGameService.ts # Game logic service
-  │   └── gameStateService.ts  # Game state management service
-  ├── constants/      # Constants
-  │   └── gameConstants.ts # Game constants
+  │   └── tetrisGameService.ts # Game logic service
   ├── assets/         # Static assets
   ├── App.vue         # Root component
   ├── main.ts         # Entry file
@@ -144,7 +178,7 @@ Issues and improvement suggestions are welcome! If you want to contribute to the
 
 ## License
 
-[MIT License](LICENSE)
+[MIT License](../../LICENSE)
 
 ## Acknowledgements
 

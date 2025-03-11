@@ -36,6 +36,7 @@ export const checkCollision = (
             return (
                 newX < 0 ||
                 newX >= GAME_CONFIG.BOARD_WIDTH ||
+                newY < 0 ||
                 newY >= GAME_CONFIG.BOARD_HEIGHT ||
                 (newY >= 0 && gameBoard[newY][newX])
             );
@@ -53,11 +54,19 @@ export const rotateShape = (shape: number[][]): number[][] => {
 /**
  * 计算游戏速度
  */
-export const calculateGameSpeed = (score: number): number => {
+export const calculateGameSpeed = (level: number): number => {
     const baseSpeed = 1000; // 基础速度1秒
-    const minSpeed = 100;   // 最小速度100毫秒
-    const speedFactor = Math.floor(score / 500); // 每500分加快一次
-    return Math.max(minSpeed, baseSpeed - speedFactor * 100);
+    const minSpeed = 150;   // 最小速度150毫秒，避免游戏过快难以操作
+
+    // 使用非线性函数计算速度，随着等级增加，速度增长变缓
+    // 这样在高等级时游戏不会变得无法操作
+    if (level <= 10) {
+        // 前10级线性减少
+        return Math.max(minSpeed, baseSpeed - (level - 1) * 80);
+    } else {
+        // 10级以后，速度增长变缓
+        return Math.max(minSpeed, baseSpeed - 800 - Math.floor(Math.sqrt(level - 10) * 30));
+    }
 };
 
 /**

@@ -174,7 +174,13 @@ const hardDropPiece = (): void => {
     const droppedPiece = hardDrop(currentPiece.value, gameBoard.value);
     if (droppedPiece) {
         currentPiece.value = droppedPiece;
-        dropPiece(); // 触发方块合并和新方块生成
+        const dropResult = dropPiece(); // 触发方块合并和新方块生成
+
+        // 检查dropPiece的返回值，如果返回false，可能需要额外处理
+        if (!dropResult && !isGameOver.value) {
+            // 如果dropPiece返回false但游戏未结束，确保生成新方块
+            generateNewPiece();
+        }
     }
 };
 
@@ -184,9 +190,9 @@ const hardDropPiece = (): void => {
 const gameLoop = (timestamp: number): void => {
     if (!isPlaying.value || isPaused.value) {
         if (gameLoopInterval) {
-            gameLoopInterval = requestAnimationFrame(gameLoop);
+            // 如果游戏暂停或未开始，不继续请求动画帧
+            return;
         }
-        return;
     }
 
     // 处理消除动画

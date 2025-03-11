@@ -50,6 +50,7 @@ const {
 let touchStartX = 0;
 let touchStartY = 0;
 let lastTouchTime = 0;
+let lastMoveTime = 0; // 添加最后移动时间变量，用于节流
 
 // 键盘事件处理
 const handleKeydown = (e: KeyboardEvent) => {
@@ -82,6 +83,9 @@ const handleKeydown = (e: KeyboardEvent) => {
 const handleTouchStart = (e: TouchEvent) => {
     if (isGameOver.value || !isPlaying.value) return;
 
+    // 阻止默认行为，防止滚动和缩放
+    e.preventDefault();
+
     const touch = e.touches[0];
     touchStartX = touch.clientX;
     touchStartY = touch.clientY;
@@ -91,33 +95,53 @@ const handleTouchStart = (e: TouchEvent) => {
 const handleTouchMove = (e: TouchEvent) => {
     if (isGameOver.value || !isPlaying.value || isPaused.value) return;
 
+    // 阻止默认行为，防止滚动
+    e.preventDefault();
+
+    const currentTime = Date.now();
+    // 添加节流逻辑，避免过快触发移动（至少间隔100ms）
+    if (currentTime - lastMoveTime < 100) return;
+
     const touch = e.touches[0];
     const diffX = touch.clientX - touchStartX;
     const diffY = touch.clientY - touchStartY;
 
+    // 调整触摸灵敏度阈值，使其在不同设备上更一致
+    const touchThreshold = windowWidth.value < 768 ? 20 : 30;
+
     // 水平移动
-    if (Math.abs(diffX) > 30 && Math.abs(diffX) > Math.abs(diffY)) {
+    if (Math.abs(diffX) > touchThreshold && Math.abs(diffX) > Math.abs(diffY)) {
         movePiece(diffX > 0 ? 1 : -1);
         touchStartX = touch.clientX;
         touchStartY = touch.clientY;
+        lastMoveTime = currentTime; // 更新最后移动时间
     }
 
     // 垂直移动（下滑）
-    if (diffY > 30 && Math.abs(diffY) > Math.abs(diffX)) {
+    if (diffY > touchThreshold && Math.abs(diffY) > Math.abs(diffX)) {
         quickDrop();
         touchStartX = touch.clientX;
         touchStartY = touch.clientY;
+        lastMoveTime = currentTime; // 更新最后移动时间
     }
 };
 
 const handleTouchEnd = (e: TouchEvent) => {
     if (isGameOver.value || !isPlaying.value) return;
 
+    // 阻止默认行为
+    e.preventDefault();
+
     const currentTime = Date.now();
     const timeDiff = currentTime - lastTouchTime;
 
+    // 调整点击检测阈值，使其在不同设备上更一致
+    const tapThreshold = windowWidth.value < 768 ? 15 : 20;
+
     // 检测是否为快速点击（轻触）- 用于旋转
-    if (timeDiff < 300 && Math.abs(e.changedTouches[0].clientX - touchStartX) < 20 && Math.abs(e.changedTouches[0].clientY - touchStartY) < 20) {
+    if (timeDiff < 300 &&
+        Math.abs(e.changedTouches[0].clientX - touchStartX) < tapThreshold &&
+        Math.abs(e.changedTouches[0].clientY - touchStartY) < tapThreshold) {
         rotatePiece();
     }
 };
@@ -127,6 +151,16 @@ const handleVisibilityChange = () => {
     if (document.hidden && isPlaying.value && !isPaused.value) {
         pauseGame();
     }
+};
+
+// 存储事件监听器引用
+const eventListeners = {
+    gameBoardTouchStart: null as EventListener | null,
+    gameBoardTouchMove: null as EventListener | null,
+    gameBoardTouchEnd: null as EventListener | null,
+    mobileGameBoardTouchStart: null as EventListener | null,
+    mobileGameBoardTouchMove: null as EventListener | null,
+    mobileGameBoardTouchEnd: null as EventListener | null
 };
 
 // 组件挂载时
@@ -143,20 +177,28 @@ onMounted(() => {
         // 更新方块大小
         blockSize.value = windowWidth.value < 768 ? 20 : GAME_CONFIG.BASE_BLOCK_SIZE;
 
+        // 保存事件监听器引用
+        eventListeners.gameBoardTouchStart = handleTouchStart as EventListener;
+        eventListeners.gameBoardTouchMove = handleTouchMove as EventListener;
+        eventListeners.gameBoardTouchEnd = handleTouchEnd as EventListener;
+        eventListeners.mobileGameBoardTouchStart = handleTouchStart as EventListener;
+        eventListeners.mobileGameBoardTouchMove = handleTouchMove as EventListener;
+        eventListeners.mobileGameBoardTouchEnd = handleTouchEnd as EventListener;
+
         // 添加触摸事件监听 - PC端游戏板
         const gameBoardEl = document.querySelector('.game-board');
         if (gameBoardEl) {
-            gameBoardEl.addEventListener('touchstart', handleTouchStart as EventListener);
-            gameBoardEl.addEventListener('touchmove', handleTouchMove as EventListener);
-            gameBoardEl.addEventListener('touchend', handleTouchEnd as EventListener);
+            gameBoardEl.addEventListener('touchstart', eventListeners.gameBoardTouchStart);
+            gameBoardEl.addEventListener('touchmove', eventListeners.gameBoardTouchMove);
+            gameBoardEl.addEventListener('touchend', eventListeners.gameBoardTouchEnd);
         }
 
         // 添加触摸事件监听 - 移动端游戏板
         const mobileGameBoard = document.querySelector('.mobile-game-board');
         if (mobileGameBoard) {
-            mobileGameBoard.addEventListener('touchstart', handleTouchStart as EventListener);
-            mobileGameBoard.addEventListener('touchmove', handleTouchMove as EventListener);
-            mobileGameBoard.addEventListener('touchend', handleTouchEnd as EventListener);
+            mobileGameBoard.addEventListener('touchstart', eventListeners.mobileGameBoardTouchStart);
+            mobileGameBoard.addEventListener('touchmove', eventListeners.mobileGameBoardTouchMove);
+            mobileGameBoard.addEventListener('touchend', eventListeners.mobileGameBoardTouchEnd);
         }
     }
 });
@@ -174,18 +216,18 @@ onUnmounted(() => {
 
         // 移除触摸事件监听 - PC端游戏板
         const gameBoardEl = document.querySelector('.game-board');
-        if (gameBoardEl) {
-            gameBoardEl.removeEventListener('touchstart', handleTouchStart as EventListener);
-            gameBoardEl.removeEventListener('touchmove', handleTouchMove as EventListener);
-            gameBoardEl.removeEventListener('touchend', handleTouchEnd as EventListener);
+        if (gameBoardEl && eventListeners.gameBoardTouchStart) {
+            gameBoardEl.removeEventListener('touchstart', eventListeners.gameBoardTouchStart);
+            gameBoardEl.removeEventListener('touchmove', eventListeners.gameBoardTouchMove!);
+            gameBoardEl.removeEventListener('touchend', eventListeners.gameBoardTouchEnd!);
         }
 
         // 移除触摸事件监听 - 移动端游戏板
         const mobileGameBoard = document.querySelector('.mobile-game-board');
-        if (mobileGameBoard) {
-            mobileGameBoard.removeEventListener('touchstart', handleTouchStart as EventListener);
-            mobileGameBoard.removeEventListener('touchmove', handleTouchMove as EventListener);
-            mobileGameBoard.removeEventListener('touchend', handleTouchEnd as EventListener);
+        if (mobileGameBoard && eventListeners.mobileGameBoardTouchStart) {
+            mobileGameBoard.removeEventListener('touchstart', eventListeners.mobileGameBoardTouchStart);
+            mobileGameBoard.removeEventListener('touchmove', eventListeners.mobileGameBoardTouchMove!);
+            mobileGameBoard.removeEventListener('touchend', eventListeners.mobileGameBoardTouchEnd!);
         }
     }
 });

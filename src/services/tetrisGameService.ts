@@ -35,7 +35,7 @@ export const mergePiece = (gameBoard: GameBoard, piece: TetrisPiece | null): Gam
 export const findLinesToClear = (gameBoard: GameBoard): number[] => {
     const lines: number[] = [];
     for (let y = GAME_CONFIG.BOARD_HEIGHT - 1; y >= 0; y--) {
-        if (gameBoard[y].every(cell => cell !== 0)) {
+        if (gameBoard[y].every(cell => cell !== 0 && cell.value !== 0)) {
             lines.push(y);
         }
     }
@@ -108,6 +108,14 @@ export const rotateWithWallKick = (
     // 尝试墙踢 - 右移
     for (let offset = 1; offset <= 2; offset++) {
         const kickedPiece = { ...newPiece, x: newPiece.x + offset };
+        if (!checkCollision(kickedPiece, gameBoard)) {
+            return kickedPiece;
+        }
+    }
+
+    // 尝试墙踢 - 上移（处理底部碰撞）
+    for (let offset = 1; offset <= 2; offset++) {
+        const kickedPiece = { ...newPiece, y: newPiece.y - offset };
         if (!checkCollision(kickedPiece, gameBoard)) {
             return kickedPiece;
         }
