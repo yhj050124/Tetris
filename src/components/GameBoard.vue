@@ -62,59 +62,57 @@ const renderBoard = computed(() => {
 
     return board;
 });
-
-// 暂停游戏
-const handlePause = () => {
-    emit('pause');
-};
-
-// 重置游戏
-const handleReset = () => {
-    emit('reset');
-};
 </script>
 
 <template>
-    <div class="game-board"
-        :style="{ width: `${GAME_CONFIG.BOARD_WIDTH * blockSize}px`, height: `${GAME_CONFIG.BOARD_HEIGHT * blockSize}px` }">
-        <template v-for="(row, y) in renderBoard" :key="y">
-            <div v-for="(cell, x) in row" :key="`${x}-${y}`" class="cell" :style="{
-                width: `${blockSize - 2}px`,
-                height: `${blockSize - 2}px`,
-                backgroundColor: cell ? cell.color : 'transparent',
-                border: cell ? '1px solid rgba(255, 255, 255, 0.1)' : '1px solid rgba(255, 255, 255, 0.05)',
-                margin: '1px'
-            }">
+    <div class="game-board-container">
+        <div class="game-board"
+            :style="{ width: `${GAME_CONFIG.BOARD_WIDTH * blockSize}px`, height: `${GAME_CONFIG.BOARD_HEIGHT * blockSize}px` }">
+            <template v-for="(row, y) in renderBoard" :key="y">
+                <div v-for="(cell, x) in row" :key="`${x}-${y}`" class="cell" :style="{
+                    width: `${blockSize - 2}px`,
+                    height: `${blockSize - 2}px`,
+                    backgroundColor: cell ? cell.color : 'transparent',
+                    border: cell ? '1px solid rgba(255, 255, 255, 0.1)' : '1px solid rgba(255, 255, 255, 0.05)',
+                    margin: '1px'
+                }">
+                </div>
+            </template>
+            <div v-if="isGameOver" class="game-over-overlay">
+                <h2>游戏结束</h2>
+                <div>最终分数: {{ score }}</div>
+                <button class="restart-button" @click="emit('reset')">重新开始</button>
             </div>
-        </template>
-        <div v-if="isGameOver" class="game-over">
-            <div class="game-over-text">游戏结束</div>
-            <div class="final-score">最终分数: {{ score }}</div>
-            <button @click="handleReset">重新开始</button>
+            <div v-if="isPaused && !isGameOver" class="pause-overlay">
+                <h2>游戏暂停</h2>
+                <button class="resume-button" @click="emit('pause')">继续游戏</button>
+            </div>
+            <button v-if="!isGameOver" class="pause-button" @click="emit('pause')">
+                <span class="pause-icon"></span>
+            </button>
         </div>
-        <div v-if="isPaused && !isGameOver" class="pause-overlay">
-            <div class="pause-text">已暂停</div>
-            <button @click="handlePause">继续</button>
-        </div>
-        <!-- 添加暂停按钮 -->
-        <button v-if="!isPaused && !isGameOver" @click="handlePause" class="pause-button">
-            <span class="pause-icon"></span>
-        </button>
     </div>
 </template>
 
 <style scoped>
-.game-board {
+.game-board-container {
     position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.game-board {
     display: grid;
     grid-template-columns: repeat(v-bind('GAME_CONFIG.BOARD_WIDTH'), 1fr);
-    background-color: rgba(0, 0, 0, 0.8);
+    background-color: rgba(0, 0, 0, 0.5);
     border: 2px solid #333;
     border-radius: 4px;
     overflow: hidden;
     box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
     gap: 0;
     padding: 0;
+    position: relative;
 }
 
 .cell {
@@ -123,7 +121,21 @@ const handleReset = () => {
     border-radius: 2px;
 }
 
-.game-over,
+.clearing {
+    animation: flash 0.2s infinite alternate;
+}
+
+@keyframes flash {
+    from {
+        opacity: 1;
+    }
+
+    to {
+        opacity: 0.3;
+    }
+}
+
+.game-over-overlay,
 .pause-overlay {
     position: absolute;
     top: 0;
@@ -134,24 +146,35 @@ const handleReset = () => {
     flex-direction: column;
     justify-content: center;
     align-items: center;
-    background-color: rgba(0, 0, 0, 0.8);
-    gap: 20px;
+    background-color: rgba(0, 0, 0, 0.7);
+    color: white;
+    font-size: 1.5em;
     z-index: 10;
 }
 
-.game-over-text,
-.pause-text {
+.game-over-overlay h2,
+.pause-overlay h2 {
+    margin-bottom: 20px;
+    margin-top: 0;
+}
+
+.restart-button,
+.resume-button {
+    margin-top: 15px;
+    padding: 8px 16px;
+    font-size: 0.8em;
+    border: none;
+    border-radius: 5px;
+    background-color: #4CAF50;
     color: white;
-    font-size: 2em;
-    text-align: center;
+    cursor: pointer;
 }
 
-.final-score {
-    color: #4CAF50;
-    font-size: 1.5em;
+.restart-button:hover,
+.resume-button:hover {
+    background-color: #45a049;
 }
 
-/* 暂停按钮样式 */
 .pause-button {
     position: absolute;
     top: 10px;
@@ -166,6 +189,7 @@ const handleReset = () => {
     padding: 0;
     z-index: 5;
     border: 1px solid rgba(255, 255, 255, 0.2);
+    cursor: pointer;
 }
 
 .pause-icon {
@@ -193,18 +217,20 @@ const handleReset = () => {
     right: 2px;
 }
 
-button {
-    padding: 10px 20px;
-    font-size: 1em;
-    border: none;
-    border-radius: 5px;
-    background-color: #4CAF50;
-    color: white;
-    cursor: pointer;
-    transition: background-color 0.3s;
-}
+/* PC端样式优化 */
+@media (min-width: 769px) {
+    .game-board {
+        border-width: 1px;
+    }
 
-button:hover {
-    background-color: #45a049;
+    .cell {
+        border-width: 1px;
+    }
+
+    .game-over-overlay h2,
+    .pause-overlay h2 {
+        font-size: 1.2em;
+        margin-bottom: 15px;
+    }
 }
 </style>

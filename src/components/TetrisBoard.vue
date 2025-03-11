@@ -1,9 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
+import { gameStateService } from '../services/gameStateService';
 import { GAME_CONFIG } from '../constants/gameConstants';
-import type { TetrisPiece, GameBoard as GameBoardType } from '../types/tetris';
-import { generateRandomPiece, checkCollision, createEmptyBoard, calculateGameSpeed } from '../utils/tetrisUtils';
-import { mergePiece, findLinesToClear, removeLines, calculateScore, rotateWithWallKick, hardDrop } from '../services/tetrisGameService';
 
 // 导入子组件
 import NextPiecePreview from './NextPiecePreview.vue';
@@ -21,158 +19,57 @@ const handleResize = () => {
     }
 };
 
-const blockSize = computed(() => {
-    return windowWidth.value < 768 ? 20 : GAME_CONFIG.BASE_BLOCK_SIZE;
-});
+// 计算方块大小
+const blockSize = ref(windowWidth.value < 768 ? 20 : GAME_CONFIG.BASE_BLOCK_SIZE);
 
-// 游戏状态
-const gameBoard = ref<GameBoardType>(createEmptyBoard());
-const score = ref(0);
-const isGameOver = ref(false);
-const isPaused = ref(false);
-const isPlaying = ref(false);
-// 添加gameLoop变量，requestAnimationFrame返回一个数字ID
-let gameLoopInterval: number | null = null;
-// 添加下一个方块预览
-const nextPiece = ref<TetrisPiece | null>(null);
-// 添加最高分记录
-const highScore = ref(localStorage.getItem('tetrisHighScore') ? parseInt(localStorage.getItem('tetrisHighScore') || '0') : 0);
-// 添加游戏级别
-const level = computed(() => Math.floor(score.value / 500) + 1);
-// 添加消除动画状态
-const linesToClear = ref<number[]>([]);
-const isClearing = ref(false);
-const clearAnimationFrame = ref(0);
-
-// 当前方块的状态
-const currentPiece = ref<TetrisPiece | null>(null);
+// 从游戏状态服务中解构需要的状态和方法
+const {
+    gameBoard,
+    score,
+    isGameOver,
+    isPaused,
+    isPlaying,
+    nextPiece,
+    highScore,
+    level,
+    linesToClear,
+    isClearing,
+    clearAnimationFrame,
+    currentPiece,
+    startGame,
+    pauseGame,
+    resetGame,
+    movePiece,
+    rotatePiece,
+    quickDrop,
+    hardDropPiece,
+    cleanupGame
+} = gameStateService;
 
 // 触摸控制相关变量
 let touchStartX = 0;
 let touchStartY = 0;
 let lastTouchTime = 0;
 
-// 生成新方块
-const generateNewPiece = () => {
-    if (nextPiece.value) {
-        currentPiece.value = nextPiece.value;
-        // 重置位置
-        currentPiece.value.x = Math.floor(GAME_CONFIG.BOARD_WIDTH / 2) - Math.floor(currentPiece.value.shape[0].length / 2);
-        currentPiece.value.y = 0;
-    } else {
-        currentPiece.value = generateRandomPiece();
-    }
-    nextPiece.value = generateRandomPiece();
-};
-
-// 快速下落
-const dropPiece = () => {
-    if (!currentPiece.value || isPaused.value) return;
-
-    const droppedPiece = hardDrop(currentPiece.value, gameBoard.value);
-    if (droppedPiece) {
-        currentPiece.value = droppedPiece;
-        gameBoard.value = mergePiece(gameBoard.value, currentPiece.value);
-        handleLineClearing();
-        generateNewPiece();
-
-        if (checkCollision(currentPiece.value, gameBoard.value)) {
-            isGameOver.value = true;
-        }
-    }
-};
-
-// 处理行消除
-const handleLineClearing = () => {
-    const lines = findLinesToClear(gameBoard.value);
-    if (lines.length > 0) {
-        // 设置动画状态
-        linesToClear.value = lines;
-        isClearing.value = true;
-        clearAnimationFrame.value = 0;
-
-        // 计算分数
-        const points = calculateScore(lines.length);
-        score.value += points;
-
-        // 更新最高分
-        if (score.value > highScore.value) {
-            highScore.value = score.value;
-            localStorage.setItem('tetrisHighScore', highScore.value.toString());
-        }
-
-        return true;
-    }
-    return false;
-};
-
-// 执行行消除动画
-const performClearAnimation = () => {
-    if (!isClearing.value) return false;
-
-    clearAnimationFrame.value++;
-
-    if (clearAnimationFrame.value >= GAME_CONFIG.CLEAR_ANIMATION_FRAMES) {
-        // 动画结束，实际移除行
-        gameBoard.value = removeLines(gameBoard.value, linesToClear.value);
-
-        // 重置动画状态
-        isClearing.value = false;
-        linesToClear.value = [];
-        clearAnimationFrame.value = 0;
-
-        // 生成新方块
-        generateNewPiece();
-
-        // 检查游戏结束
-        if (checkCollision(currentPiece.value, gameBoard.value)) {
-            isGameOver.value = true;
-            isPlaying.value = false;
-            return false;
-        }
-
-        return false;
-    }
-
-    return true; // 动画仍在进行中
-};
-
-// 移动方块
-const movePiece = (dx: number) => {
-    if (!currentPiece.value || isPaused.value) return;
-
-    if (!checkCollision(currentPiece.value, gameBoard.value, dx, 0)) {
-        currentPiece.value.x += dx;
-    }
-};
-
-// 旋转方块
-const rotatePiece = () => {
-    if (!currentPiece.value || isPaused.value) return;
-    currentPiece.value = rotateWithWallKick(currentPiece.value, gameBoard.value);
-};
-
 // 键盘事件处理
-const handleKeydown = (event: KeyboardEvent) => {
-    if (isGameOver.value || !isPlaying.value) return;
+const handleKeydown = (e: KeyboardEvent) => {
+    if (isGameOver.value) return;
 
-    switch (event.key) {
+    switch (e.key) {
         case 'ArrowLeft':
             movePiece(-1);
             break;
         case 'ArrowRight':
             movePiece(1);
             break;
-        case 'ArrowDown':
-            if (!checkCollision(currentPiece.value, gameBoard.value, 0, 1)) {
-                currentPiece.value!.y++;
-            }
-            break;
         case 'ArrowUp':
             rotatePiece();
             break;
+        case 'ArrowDown':
+            quickDrop();
+            break;
         case ' ':
-            dropPiece();
+            hardDropPiece();
             break;
         case 'p':
         case 'P':
@@ -181,195 +78,70 @@ const handleKeydown = (event: KeyboardEvent) => {
     }
 };
 
-// 处理触摸开始
-const handleTouchStart = (event: Event) => {
-    if (isGameOver.value || !isPlaying.value || isPaused.value) return;
+// 触摸事件处理
+const handleTouchStart = (e: TouchEvent) => {
+    if (isGameOver.value || !isPlaying.value) return;
 
-    const touchEvent = event as TouchEvent;
-    touchStartX = touchEvent.touches[0].clientX;
-    touchStartY = touchEvent.touches[0].clientY;
+    const touch = e.touches[0];
+    touchStartX = touch.clientX;
+    touchStartY = touch.clientY;
     lastTouchTime = Date.now();
 };
 
-// 处理触摸移动
-const handleTouchMove = (event: Event) => {
+const handleTouchMove = (e: TouchEvent) => {
     if (isGameOver.value || !isPlaying.value || isPaused.value) return;
 
-    const touchEvent = event as TouchEvent;
-    const touchX = touchEvent.touches[0].clientX;
-    const touchY = touchEvent.touches[0].clientY;
-    const diffX = touchX - touchStartX;
-    const diffY = touchY - touchStartY;
-    const currentTime = Date.now();
+    const touch = e.touches[0];
+    const diffX = touch.clientX - touchStartX;
+    const diffY = touch.clientY - touchStartY;
 
-    // 防止过于频繁的移动
-    if (currentTime - lastTouchTime < 100) return;
-
-    // 水平滑动 - 左右移动
+    // 水平移动
     if (Math.abs(diffX) > 30 && Math.abs(diffX) > Math.abs(diffY)) {
-        if (diffX > 0) {
-            movePiece(1); // 右移
-        } else {
-            movePiece(-1); // 左移
-        }
-        touchStartX = touchX;
-        lastTouchTime = currentTime;
+        movePiece(diffX > 0 ? 1 : -1);
+        touchStartX = touch.clientX;
+        touchStartY = touch.clientY;
     }
 
-    // 垂直滑动 - 加速下落
-    if (diffY > 50 && Math.abs(diffY) > Math.abs(diffX)) {
-        if (!checkCollision(currentPiece.value, gameBoard.value, 0, 1)) {
-            currentPiece.value!.y++;
-        }
-        touchStartY = touchY;
-        lastTouchTime = currentTime;
+    // 垂直移动（下滑）
+    if (diffY > 30 && Math.abs(diffY) > Math.abs(diffX)) {
+        quickDrop();
+        touchStartX = touch.clientX;
+        touchStartY = touch.clientY;
     }
 };
 
-// 处理触摸结束
-const handleTouchEnd = (event: Event) => {
-    if (isGameOver.value || !isPlaying.value || isPaused.value) return;
+const handleTouchEnd = (e: TouchEvent) => {
+    if (isGameOver.value || !isPlaying.value) return;
 
-    const touchEvent = event as TouchEvent;
-    const touchEndX = touchEvent.changedTouches[0].clientX;
-    const touchEndY = touchEvent.changedTouches[0].clientY;
-    const diffX = touchEndX - touchStartX;
-    const diffY = touchEndY - touchStartY;
+    const currentTime = Date.now();
+    const timeDiff = currentTime - lastTouchTime;
 
-    // 快速点击 - 旋转
-    if (Math.abs(diffX) < 10 && Math.abs(diffY) < 10 && (Date.now() - lastTouchTime < 300)) {
+    // 检测是否为快速点击（轻触）- 用于旋转
+    if (timeDiff < 300 && Math.abs(e.changedTouches[0].clientX - touchStartX) < 20 && Math.abs(e.changedTouches[0].clientY - touchStartY) < 20) {
         rotatePiece();
     }
-
-    // 快速下滑 - 硬降
-    if (diffY > 100 && Math.abs(diffY) > Math.abs(diffX) * 2) {
-        dropPiece();
-    }
 };
 
-// 游戏主循环
-const startGame = () => {
-    isGameOver.value = false;
-    isPaused.value = false;
-    isPlaying.value = true;
-    score.value = 0;
-    gameBoard.value = createEmptyBoard();
-    nextPiece.value = generateRandomPiece();
-    generateNewPiece();
-
-    // 重置动画状态
-    isClearing.value = false;
-    linesToClear.value = [];
-    clearAnimationFrame.value = 0;
-
-    if (gameLoopInterval) {
-        cancelAnimationFrame(gameLoopInterval);
-        gameLoopInterval = null;
-    }
-
-    let lastTime = 0;
-    let deltaTime = 0;
-    let currentSpeed = calculateGameSpeed(score.value);
-    let animationFrameTime = 0;
-    const ANIMATION_FRAME_DURATION = GAME_CONFIG.ANIMATION_FRAME_DURATION;
-
-    const runGameLoop = (timestamp: number) => {
-        if (!lastTime) lastTime = timestamp;
-        const frameTime = timestamp - lastTime;
-        lastTime = timestamp;
-
-        // 如果游戏暂停，继续保持循环但不更新游戏状态
-        if (isPaused.value) {
-            gameLoopInterval = requestAnimationFrame(runGameLoop);
-            return;
-        }
-
-        if (!isPlaying.value || isGameOver.value) {
-            return;
-        }
-
-        // 处理消除动画
-        if (isClearing.value) {
-            animationFrameTime += frameTime;
-            if (animationFrameTime >= ANIMATION_FRAME_DURATION) {
-                animationFrameTime = 0;
-                performClearAnimation();
-            }
-            gameLoopInterval = requestAnimationFrame(runGameLoop);
-            return;
-        }
-
-        // 正常游戏逻辑
-        deltaTime += frameTime;
-
-        // 根据当前游戏速度更新游戏状态
-        if (deltaTime >= currentSpeed) {
-            // 重置累积时间
-            deltaTime = 0;
-
-            // 更新游戏速度
-            currentSpeed = calculateGameSpeed(score.value);
-
-            // 更新游戏状态
-            if (currentPiece.value && !checkCollision(currentPiece.value, gameBoard.value, 0, 1)) {
-                currentPiece.value.y++;
-            } else {
-                if (currentPiece.value) {
-                    gameBoard.value = mergePiece(gameBoard.value, currentPiece.value);
-                    // 如果有行需要清除，则开始动画，否则生成新方块
-                    if (!handleLineClearing()) {
-                        generateNewPiece();
-                        if (checkCollision(currentPiece.value, gameBoard.value)) {
-                            isGameOver.value = true;
-                            isPlaying.value = false;
-                            if (gameLoopInterval) {
-                                cancelAnimationFrame(gameLoopInterval);
-                                gameLoopInterval = null;
-                            }
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-
-        // 继续游戏循环
-        gameLoopInterval = requestAnimationFrame(runGameLoop);
-    };
-
-    // 启动游戏循环
-    gameLoopInterval = requestAnimationFrame(runGameLoop);
-    return gameLoopInterval;
-};
-
-// 暂停游戏
-const pauseGame = () => {
-    isPaused.value = !isPaused.value;
-};
-
-// 重置游戏
-const resetGame = () => {
-    if (gameLoopInterval) {
-        cancelAnimationFrame(gameLoopInterval);
-        gameLoopInterval = null;
-    }
-    startGame();
-};
-
-// 处理页面可见性变化
+// 页面可见性变化处理
 const handleVisibilityChange = () => {
-    if (document.hidden && isPlaying.value && !isPaused.value && !isGameOver.value) {
-        // 当页面不可见且游戏正在进行时自动暂停
+    if (document.hidden && isPlaying.value && !isPaused.value) {
         pauseGame();
     }
 };
 
+// 组件挂载时
 onMounted(() => {
+    // 初始化游戏
+    resetGame();
+
+    // 添加事件监听
     if (typeof window !== 'undefined') {
         window.addEventListener('resize', handleResize);
         window.addEventListener('keydown', handleKeydown);
-        // 添加页面可见性变化监听
         document.addEventListener('visibilitychange', handleVisibilityChange);
+
+        // 更新方块大小
+        blockSize.value = windowWidth.value < 768 ? 20 : GAME_CONFIG.BASE_BLOCK_SIZE;
 
         // 添加触摸事件监听 - PC端游戏板
         const gameBoardEl = document.querySelector('.game-board');
@@ -380,27 +152,24 @@ onMounted(() => {
         }
 
         // 添加触摸事件监听 - 移动端游戏板
-        setTimeout(() => {
-            const mobileGameBoard = document.querySelector('.mobile-game-board');
-            if (mobileGameBoard) {
-                mobileGameBoard.addEventListener('touchstart', handleTouchStart as EventListener);
-                mobileGameBoard.addEventListener('touchmove', handleTouchMove as EventListener);
-                mobileGameBoard.addEventListener('touchend', handleTouchEnd as EventListener);
-            }
-        }, 500); // 延迟添加事件监听，确保DOM已完全加载
+        const mobileGameBoard = document.querySelector('.mobile-game-board');
+        if (mobileGameBoard) {
+            mobileGameBoard.addEventListener('touchstart', handleTouchStart as EventListener);
+            mobileGameBoard.addEventListener('touchmove', handleTouchMove as EventListener);
+            mobileGameBoard.addEventListener('touchend', handleTouchEnd as EventListener);
+        }
     }
-
-    // 确保游戏循环在组件挂载后启动
-    setTimeout(() => {
-        startGame();
-    }, 100);
 });
 
+// 组件卸载时
 onUnmounted(() => {
+    // 清理游戏资源
+    cleanupGame();
+
+    // 移除事件监听
     if (typeof window !== 'undefined') {
         window.removeEventListener('resize', handleResize);
         window.removeEventListener('keydown', handleKeydown);
-        // 移除页面可见性变化监听
         document.removeEventListener('visibilitychange', handleVisibilityChange);
 
         // 移除触摸事件监听 - PC端游戏板
@@ -418,10 +187,6 @@ onUnmounted(() => {
             mobileGameBoard.removeEventListener('touchmove', handleTouchMove as EventListener);
             mobileGameBoard.removeEventListener('touchend', handleTouchEnd as EventListener);
         }
-    }
-    if (gameLoopInterval) {
-        cancelAnimationFrame(gameLoopInterval);
-        gameLoopInterval = null;
     }
 });
 </script>
@@ -465,19 +230,19 @@ onUnmounted(() => {
 
         <!-- 移动端布局 -->
         <div class="mobile-layout" v-if="windowWidth < 768">
-            <!-- 上方信息区域 -->
+            <!-- 上方信息区域 - 新布局：左边分数，中间控制按钮，右边下一个方块 -->
             <div class="mobile-top-area">
                 <!-- 左侧分数区域 -->
-                <ScoreDisplay :score="score" :high-score="highScore" :level="level" />
+                <ScoreDisplay :score="score" :high-score="highScore" :level="level" class="mobile-score" />
+
+                <!-- 中间控制按钮区域 -->
+                <div class="mobile-controls-area">
+                    <ControlButtons :is-playing="isPlaying" :is-game-over="isGameOver" :is-paused="isPaused"
+                        @start="startGame" @pause="pauseGame" @reset="resetGame" />
+                </div>
 
                 <!-- 右侧下一个方块预览 -->
-                <NextPiecePreview :next-piece="nextPiece" :block-size="blockSize" />
-            </div>
-
-            <!-- 控制按钮区域 -->
-            <div class="mobile-controls-area">
-                <ControlButtons :is-playing="isPlaying" :is-game-over="isGameOver" :is-paused="isPaused"
-                    @start="startGame" @pause="pauseGame" @reset="resetGame" />
+                <NextPiecePreview :next-piece="nextPiece" :block-size="blockSize" class="mobile-preview" />
             </div>
 
             <!-- 游戏主体 -->
@@ -493,7 +258,7 @@ onUnmounted(() => {
                 </div>
                 <div class="control-row">
                     <button @click="movePiece(-1)" class="move-btn">←</button>
-                    <button @click="dropPiece" class="drop-btn">下降</button>
+                    <button @click="hardDropPiece" class="drop-btn">下降</button>
                     <button @click="movePiece(1)" class="move-btn">→</button>
                 </div>
             </div>
@@ -506,100 +271,114 @@ onUnmounted(() => {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 20px;
-    padding: 20px;
+    padding: 10px;
+    min-height: 95vh;
+    /* 减小高度，避免滚动条 */
     background-color: #1a1a1a;
-    min-height: 100vh;
-    width: 100%;
+    color: white;
+    font-family: 'Arial', sans-serif;
     box-sizing: border-box;
 }
 
-.game-header h1 {
-    color: #4CAF50;
-    margin: 0 0 20px 0;
-    text-shadow: 0 0 10px rgba(76, 175, 80, 0.5);
+.game-header {
+    margin-bottom: 10px;
     text-align: center;
 }
 
-/* PC端布局样式 */
+.game-header h1 {
+    font-size: 1.8em;
+    color: #4CAF50;
+    margin: 0;
+}
+
 .game-content {
     display: flex;
     justify-content: center;
-    align-items: flex-start;
-    gap: 20px;
-    width: 100%;
-    max-width: 1200px;
+    gap: 15px;
+    max-width: 95vw;
+    /* 限制最大宽度 */
 }
 
-.left-panel,
-.right-panel {
-    flex: 1;
+.desktop-layout {
     display: flex;
-    flex-direction: column;
-    gap: 20px;
-    max-width: 250px;
 }
 
-.center-panel {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    position: relative;
-    gap: 10px;
-}
-
-.instructions {
-    margin-top: 0;
-    color: #aaa;
-    text-align: left;
-    background-color: rgba(0, 0, 0, 0.3);
-    padding: 15px;
-    border-radius: 8px;
-    border: 1px solid #333;
-}
-
-.instructions h3 {
-    color: white;
-    margin-bottom: 10px;
-}
-
-.instructions p {
-    margin: 5px 0;
-}
-
-/* 移动端布局样式 */
 .mobile-layout {
     display: none;
     flex-direction: column;
     align-items: center;
     width: 100%;
-    gap: 15px;
 }
 
+.left-panel,
+.right-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    max-width: 180px;
+    /* 减小宽度 */
+}
+
+.center-panel {
+    display: flex;
+    justify-content: center;
+}
+
+.instructions {
+    background-color: rgba(0, 0, 0, 0.3);
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid #333;
+    font-size: 0.9em;
+    /* 减小字体大小 */
+}
+
+.instructions h3 {
+    margin-top: 0;
+    margin-bottom: 8px;
+    color: #4CAF50;
+    font-size: 1em;
+}
+
+.instructions p {
+    margin: 4px 0;
+}
+
+/* 移动端布局样式 */
 .mobile-top-area {
     display: flex;
     justify-content: space-between;
+    align-items: stretch;
     width: 100%;
-    max-width: 400px;
-    gap: 10px;
+    margin-bottom: 10px;
+    gap: 5px;
+}
+
+.mobile-score {
+    flex: 1;
+    max-width: 30%;
+    transform-origin: left center;
 }
 
 .mobile-controls-area {
+    flex: 1;
     display: flex;
     justify-content: center;
-    gap: 10px;
-    width: 100%;
-    max-width: 400px;
+    max-width: 40%;
+    transform-origin: center;
+}
+
+.mobile-preview {
+    flex: 1;
+    max-width: 30%;
+    transform-origin: right center;
 }
 
 .mobile-controls {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
     width: 100%;
     max-width: 300px;
     background-color: rgba(0, 0, 0, 0.3);
-    padding: 10px;
+    padding: 8px;
     border-radius: 8px;
     border: 1px solid #333;
     margin-top: 5px;
@@ -609,12 +388,17 @@ onUnmounted(() => {
     display: flex;
     justify-content: center;
     gap: 8px;
+    margin-bottom: 5px;
+}
+
+.control-row:last-child {
+    margin-bottom: 0;
 }
 
 .mobile-controls button {
-    width: 50px;
-    height: 50px;
-    font-size: 1.2em;
+    width: 45px;
+    height: 45px;
+    font-size: 1.1em;
     padding: 0;
     display: flex;
     justify-content: center;
@@ -670,12 +454,13 @@ onUnmounted(() => {
 
 @media (max-width: 768px) {
     .tetris-container {
-        padding: 10px;
+        padding: 5px;
+        min-height: 98vh;
     }
 
     .game-header h1 {
-        font-size: 1.5em;
-        margin-bottom: 10px;
+        font-size: 1.4em;
+        margin-bottom: 5px;
     }
 
     .desktop-layout {
@@ -684,6 +469,54 @@ onUnmounted(() => {
 
     .mobile-layout {
         display: flex;
+    }
+
+    /* 移动端组件样式调整 */
+    .mobile-score,
+    .mobile-preview,
+    .mobile-controls-area {
+        transform: scale(0.9);
+        margin: 0;
+        height: 120px;
+        /* 统一高度 */
+        display: flex;
+        align-items: center;
+    }
+
+    .mobile-game-board {
+        margin: 5px 0;
+    }
+
+    /* 控制按钮样式调整 */
+    .mobile-controls-area :deep(.controls) {
+        flex-direction: column;
+        gap: 5px;
+        height: 100%;
+        justify-content: center;
+        padding: 8px;
+    }
+
+    .mobile-controls-area :deep(button) {
+        padding: 8px;
+        font-size: 0.9em;
+        width: 100%;
+    }
+}
+
+/* 小屏幕手机适配 */
+@media (max-width: 375px) {
+
+    .mobile-score,
+    .mobile-preview,
+    .mobile-controls-area {
+        transform: scale(0.85);
+        height: 110px;
+        /* 稍微减小高度 */
+    }
+
+    .mobile-controls button {
+        width: 40px;
+        height: 40px;
     }
 }
 </style>

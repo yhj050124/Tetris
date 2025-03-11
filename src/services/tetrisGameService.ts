@@ -3,7 +3,7 @@
  */
 import type { TetrisPiece, GameBoard } from '../types/tetris';
 import { GAME_CONFIG } from '../constants/gameConstants';
-import { generateRandomPiece, checkCollision, createEmptyBoard } from '../utils/tetrisUtils';
+import { checkCollision } from '../utils/tetrisUtils';
 
 /**
  * 合并方块到游戏板
@@ -46,15 +46,20 @@ export const findLinesToClear = (gameBoard: GameBoard): number[] => {
  * 移除行并在顶部添加新行
  */
 export const removeLines = (gameBoard: GameBoard, lines: number[]): GameBoard => {
-    const newBoard = [...gameBoard];
-    // 按照从下到上的顺序排序行索引
+    // 创建一个新的游戏板副本
+    const newBoard = gameBoard.map(row => [...row]);
+
+    // 按照从下到上的顺序排序行索引（确保先删除下面的行）
     const sortedLines = [...lines].sort((a, b) => b - a);
 
     // 移除行
     for (const y of sortedLines) {
-        newBoard.splice(y, 1);
-        // 在顶部添加新行
-        newBoard.unshift(Array(GAME_CONFIG.BOARD_WIDTH).fill(0));
+        // 确保行索引在有效范围内
+        if (y >= 0 && y < GAME_CONFIG.BOARD_HEIGHT) {
+            newBoard.splice(y, 1);
+            // 在顶部添加新行
+            newBoard.unshift(Array(GAME_CONFIG.BOARD_WIDTH).fill(0));
+        }
     }
 
     return newBoard;

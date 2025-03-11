@@ -1,5 +1,5 @@
 <script setup lang="ts">
-const props = defineProps<{
+defineProps<{
     isPlaying: boolean;
     isGameOver: boolean;
     isPaused: boolean;
@@ -56,5 +56,32 @@ button {
 
 button:hover {
     background-color: #45a049;
+}
+
+/* 移动端样式 */
+@media (max-width: 768px) {
+    .controls {
+        flex-direction: column;
+        gap: 5px;
+        padding: 8px;
+        height: 100%;
+        justify-content: center;
+        min-width: 100px;
+    }
+
+    button {
+        padding: 8px;
+        font-size: 0.9em;
+        width: 100%;
+        margin: 0;
+    }
+}
+
+/* 小屏幕手机适配 */
+@media (max-width: 375px) {
+    button {
+        padding: 6px;
+        font-size: 0.8em;
+    }
 }
 </style>

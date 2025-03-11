@@ -61,21 +61,45 @@ const previewBoard = computed(() => {
 }
 
 .next-piece-title {
-    font-size: 1.2em;
-    color: white;
+    margin-top: 0;
     margin-bottom: 10px;
+    color: white;
+    font-size: 1.2em;
+    text-align: center;
 }
 
 .next-piece-preview {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    background-color: rgba(0, 0, 0, 0.5);
-    border: 1px solid #333;
-    gap: 0;
-    padding: 0;
+    grid-template-rows: repeat(4, 1fr);
+    gap: 1px;
 }
 
 .preview-cell {
+    width: 20px;
+    height: 20px;
+    border: 1px solid #333;
     box-sizing: border-box;
+}
+
+.filled {
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+/* 移动端样式 */
+@media (max-width: 768px) {
+    .next-piece-container {
+        padding: 10px;
+    }
+
+    .next-piece-title {
+        margin-bottom: 5px;
+        font-size: 1em;
+    }
+
+    .preview-cell {
+        width: 15px;
+        height: 15px;
+    }
 }
 </style>
